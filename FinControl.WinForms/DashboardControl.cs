@@ -1,24 +1,35 @@
 using System.Globalization;
+using System.Windows.Forms.DataVisualization.Charting;
 using FinControl.Application.Dashboard;
 using FinControl.Infrastructure.Persistence;
+using FinControl.WinForms.Components;
+using FinControl.WinForms.Design;
 
 namespace FinControl.WinForms;
 
 public sealed class DashboardControl : UserControl
 {
     private readonly IDashboardService _dashboardService;
-    private readonly CultureInfo _culturaMoeda = CultureInfo.GetCultureInfo("pt-BR");
-    private readonly Label _saldoAtualValor = CriarValorCard();
-    private readonly Label _receitasMesValor = CriarValorCard();
-    private readonly Label _despesasMesValor = CriarValorCard();
-    private readonly Label _transacoesMesValor = CriarValorCard();
-    private readonly Label _contasAtivasValor = CriarValorCard();
-    private readonly Label _metasValor = CriarValorCard();
-    private readonly Label _statusLabel = CriarStatusLabel("Carregando dados...");
+    private readonly CultureInfo _culture = CultureInfo.GetCultureInfo("pt-BR");
+    private readonly SummaryCard _saldoCard = new();
+    private readonly SummaryCard _receitasCard = new();
+    private readonly SummaryCard _despesasCard = new();
+    private readonly SummaryCard _economiaCard = new();
+    private readonly ChartPanel _linhaPanel = new("Receitas x Despesas");
+    private readonly ChartPanel _categoriaPanel = new("Categorias");
+    private readonly ChartPanel _barrasPanel = new("Gastos mensais");
+    private readonly ChartPanel _ultimasPanel = new("Ultimas transacoes");
+    private readonly BudgetProgressCard _orcamentoCard = new();
+    private readonly Label _stateLabel = new();
+
+    public event EventHandler? NovaTransacaoSolicitada;
 
     public DashboardControl(IDashboardService dashboardService)
     {
         _dashboardService = dashboardService;
+        AutoScaleMode = AutoScaleMode.None;
+        AutoSize = false;
+        Margin = Padding.Empty;
 
         ConfigurarTela();
     }
@@ -34,21 +45,22 @@ public sealed class DashboardControl : UserControl
     {
         try
         {
-            var resumo = await _dashboardService.ObterResumoAsync(
+            MostrarEstado("Carregando dashboard...");
+
+            var dashboard = await _dashboardService.ObterDashboardAsync(
                 BancoDadosInicializador.UsuarioPadraoId,
                 DateTime.Today);
 
-            _saldoAtualValor.Text = resumo.SaldoAtual.ToString("C", _culturaMoeda);
-            _receitasMesValor.Text = resumo.ReceitasMes.ToString("C", _culturaMoeda);
-            _despesasMesValor.Text = resumo.DespesasMes.ToString("C", _culturaMoeda);
-            _transacoesMesValor.Text = resumo.TotalTransacoesMes.ToString(_culturaMoeda);
-            _contasAtivasValor.Text = resumo.ContasAtivas.ToString(_culturaMoeda);
-            _metasValor.Text = resumo.MetasEmAndamento.ToString(_culturaMoeda);
-            _statusLabel.Text = $"Atualizado em {DateTime.Now:dd/MM/yyyy HH:mm}";
+            AtualizarCards(dashboard);
+            AtualizarGraficos(dashboard);
+            AtualizarUltimasTransacoes(dashboard);
+            MostrarEstado(dashboard.PossuiTransacoes
+                ? $"Atualizado em {DateTime.Now:dd/MM/yyyy HH:mm}"
+                : "Sem transacoes cadastradas neste momento.");
         }
         catch (Exception ex)
         {
-            _statusLabel.Text = "Nao foi possivel carregar o dashboard.";
+            MostrarEstado("Erro ao carregar dashboard.");
             MessageBox.Show(
                 ex.Message,
                 "FinControl",
@@ -59,98 +71,374 @@ public sealed class DashboardControl : UserControl
 
     private void ConfigurarTela()
     {
-        BackColor = Color.FromArgb(246, 248, 250);
+        BackColor = AppTheme.Background;
 
-        var container = new TableLayoutPanel
+        var root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 2,
-            BackColor = BackColor
+            RowCount = 4,
+            BackColor = AppTheme.Background
         };
 
-        container.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        container.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 126));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 52));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 48));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
 
-        container.Controls.Add(CriarGridCards(), 0, 0);
-        container.Controls.Add(_statusLabel, 0, 1);
+        root.Controls.Add(CriarCardsResumo(), 0, 0);
+        root.Controls.Add(CriarAreaSuperior(), 0, 1);
+        root.Controls.Add(CriarAreaInferior(), 0, 2);
 
-        Controls.Add(container);
+        _stateLabel.Dock = DockStyle.Fill;
+        _stateLabel.ForeColor = AppTheme.MutedText;
+        _stateLabel.Font = AppTheme.LabelFont;
+        _stateLabel.TextAlign = ContentAlignment.MiddleLeft;
+        root.Controls.Add(_stateLabel, 0, 3);
+
+        Controls.Add(root);
     }
 
-    private Control CriarGridCards()
+    private Control CriarCardsResumo()
     {
-        var grid = new TableLayoutPanel
+        var cards = new TableLayoutPanel
         {
-            Dock = DockStyle.Top,
-            ColumnCount = 3,
-            RowCount = 2,
-            AutoSize = true,
+            Dock = DockStyle.Fill,
+            ColumnCount = 4,
+            RowCount = 1,
             BackColor = Color.Transparent
         };
 
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333F));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333F));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333F));
-        grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128));
-        grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128));
+        for (var i = 0; i < 4; i++)
+        {
+            cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        }
 
-        grid.Controls.Add(CriarCard("Saldo atual", _saldoAtualValor), 0, 0);
-        grid.Controls.Add(CriarCard("Receitas do mes", _receitasMesValor), 1, 0);
-        grid.Controls.Add(CriarCard("Despesas do mes", _despesasMesValor), 2, 0);
-        grid.Controls.Add(CriarCard("Transacoes do mes", _transacoesMesValor), 0, 1);
-        grid.Controls.Add(CriarCard("Contas ativas", _contasAtivasValor), 1, 1);
-        grid.Controls.Add(CriarCard("Metas em andamento", _metasValor), 2, 1);
+        cards.Controls.Add(_saldoCard, 0, 0);
+        cards.Controls.Add(_receitasCard, 1, 0);
+        cards.Controls.Add(_despesasCard, 2, 0);
+        cards.Controls.Add(_economiaCard, 3, 0);
+
+        return cards;
+    }
+
+    private Control CriarAreaSuperior()
+    {
+        var grid = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            BackColor = Color.Transparent
+        };
+
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+
+        grid.Controls.Add(_linhaPanel, 0, 0);
+        grid.Controls.Add(_orcamentoCard, 1, 0);
 
         return grid;
     }
 
-    private static Control CriarCard(string titulo, Label valor)
+    private Control CriarAreaInferior()
     {
-        var card = new Panel
+        var grid = new TableLayoutPanel
         {
-            BackColor = Color.White,
             Dock = DockStyle.Fill,
-            Margin = new Padding(0, 0, 16, 16),
-            Padding = new Padding(18),
-            BorderStyle = BorderStyle.FixedSingle
+            ColumnCount = 3,
+            RowCount = 1,
+            BackColor = Color.Transparent
         };
 
-        var tituloLabel = new Label
-        {
-            AutoSize = true,
-            Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point),
-            ForeColor = Color.FromArgb(88, 96, 105),
-            Location = new Point(18, 18),
-            Text = titulo
-        };
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 31));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 31));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 38));
 
-        valor.Location = new Point(18, 52);
+        grid.Controls.Add(_categoriaPanel, 0, 0);
+        grid.Controls.Add(_barrasPanel, 1, 0);
+        grid.Controls.Add(_ultimasPanel, 2, 0);
 
-        card.Controls.Add(tituloLabel);
-        card.Controls.Add(valor);
-
-        return card;
+        return grid;
     }
 
-    private static Label CriarValorCard()
+    private void AtualizarCards(DashboardDto dashboard)
     {
-        return new Label
+        _saldoCard.Atualizar(
+            "Saldo geral",
+            dashboard.SaldoGeral.ToString("C", _culture),
+            "R$",
+            AppTheme.Blue,
+            "Contas e pagamentos");
+
+        _receitasCard.Atualizar(
+            "Receitas mes",
+            dashboard.TotalReceitasMes.ToString("C", _culture),
+            "+",
+            AppTheme.Green,
+            FormatarVariacao(dashboard.PercentualVariacaoReceitas));
+
+        _despesasCard.Atualizar(
+            "Despesas mes",
+            dashboard.TotalDespesasMes.ToString("C", _culture),
+            "-",
+            AppTheme.Red,
+            FormatarVariacao(dashboard.PercentualVariacaoDespesas));
+
+        _economiaCard.Atualizar(
+            "Economia",
+            dashboard.EconomiaMes.ToString("C", _culture),
+            "%",
+            dashboard.EconomiaMes >= 0 ? AppTheme.Cyan : AppTheme.Warning,
+            dashboard.EconomiaMes >= 0 ? "Resultado positivo" : "Resultado negativo");
+    }
+
+    private void AtualizarGraficos(DashboardDto dashboard)
+    {
+        _linhaPanel.SetContent(CriarGraficoReceitasDespesas(dashboard));
+        _categoriaPanel.SetContent(CriarGraficoCategorias(dashboard));
+        _barrasPanel.SetContent(CriarGraficoBarras(dashboard));
+        _orcamentoCard.Atualizar(
+            dashboard.OrcamentoTotal,
+            dashboard.OrcamentoUtilizado,
+            dashboard.OrcamentoDisponivel,
+            dashboard.PercentualOrcamentoUtilizado);
+    }
+
+    private Chart CriarGraficoReceitasDespesas(DashboardDto dashboard)
+    {
+        var chart = CriarChartBase();
+        var area = chart.ChartAreas[0];
+
+        area.AxisX.MajorGrid.Enabled = false;
+        area.AxisY.LabelStyle.Format = "C0";
+
+        var receitas = CriarSerieLinha("Receitas", AppTheme.Green);
+        var despesas = CriarSerieLinha("Despesas", AppTheme.Red);
+
+        foreach (var item in dashboard.ReceitasPorMes)
         {
-            AutoSize = true,
-            Font = new Font("Segoe UI Semibold", 18F, FontStyle.Bold, GraphicsUnit.Point),
-            ForeColor = Color.FromArgb(31, 35, 40),
-            Text = "0"
+            var index = receitas.Points.AddXY(item.Mes.ToString("MMM", _culture), item.Valor);
+            receitas.Points[index].ToolTip = item.Valor.ToString("C", _culture);
+        }
+
+        foreach (var item in dashboard.DespesasPorMes)
+        {
+            var index = despesas.Points.AddXY(item.Mes.ToString("MMM", _culture), item.Valor);
+            despesas.Points[index].ToolTip = item.Valor.ToString("C", _culture);
+        }
+
+        chart.Series.Add(receitas);
+        chart.Series.Add(despesas);
+
+        return chart;
+    }
+
+    private Chart CriarGraficoCategorias(DashboardDto dashboard)
+    {
+        var chart = CriarChartBase();
+        chart.ChartAreas[0].AxisX.Enabled = AxisEnabled.False;
+        chart.ChartAreas[0].AxisY.Enabled = AxisEnabled.False;
+
+        var serie = new Series("Categorias")
+        {
+            ChartType = SeriesChartType.Doughnut,
+            Font = AppTheme.LabelFont,
+            LabelForeColor = AppTheme.Text
+        };
+
+        serie["DoughnutRadius"] = "58";
+
+        if (dashboard.DespesasPorCategoria.Count == 0)
+        {
+            serie.Points.AddXY("Sem despesas", 1);
+            serie.Points[0].Color = AppTheme.PanelAlt;
+            serie.Points[0].Label = "Sem dados";
+        }
+        else
+        {
+            var colors = new[] { AppTheme.Cyan, AppTheme.Purple, AppTheme.Magenta, AppTheme.Blue, AppTheme.Warning };
+
+            for (var i = 0; i < dashboard.DespesasPorCategoria.Count; i++)
+            {
+                var item = dashboard.DespesasPorCategoria[i];
+                var pointIndex = serie.Points.AddXY(item.Categoria, item.Valor);
+                var point = serie.Points[pointIndex];
+
+                point.Color = colors[i % colors.Length];
+                point.LegendText = $"{item.Categoria} ({item.Percentual:N0}%)";
+                point.Label = $"{item.Percentual:N0}%";
+                point.ToolTip = $"{item.Categoria}: {item.Valor.ToString("C", _culture)}";
+            }
+        }
+
+        chart.Series.Add(serie);
+
+        return chart;
+    }
+
+    private Chart CriarGraficoBarras(DashboardDto dashboard)
+    {
+        var chart = CriarChartBase();
+        var area = chart.ChartAreas[0];
+
+        area.AxisX.MajorGrid.Enabled = false;
+        area.AxisY.LabelStyle.Format = "C0";
+
+        var serie = new Series("Gastos")
+        {
+            ChartType = SeriesChartType.Column,
+            Color = AppTheme.Cyan,
+            BorderWidth = 0,
+            IsValueShownAsLabel = false
+        };
+
+        foreach (var item in dashboard.DespesasPorMes)
+        {
+            var pointIndex = serie.Points.AddXY(item.Mes.ToString("MMM", _culture), item.Valor);
+            serie.Points[pointIndex].ToolTip = item.Valor.ToString("C", _culture);
+        }
+
+        chart.Series.Add(serie);
+
+        return chart;
+    }
+
+    private void AtualizarUltimasTransacoes(DashboardDto dashboard)
+    {
+        var panel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.Transparent,
+            AutoScroll = true
+        };
+
+        if (dashboard.UltimasTransacoes.Count == 0)
+        {
+            var empty = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 3,
+                BackColor = Color.Transparent
+            };
+
+            empty.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            empty.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+            empty.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+
+            var button = new Button
+            {
+                Dock = DockStyle.Fill,
+                Text = "Nova transacao",
+                FlatStyle = FlatStyle.Flat,
+                BackColor = AppTheme.Purple,
+                ForeColor = AppTheme.Text,
+                Font = AppTheme.SectionFont,
+                Cursor = Cursors.Hand
+            };
+
+            button.FlatAppearance.BorderSize = 0;
+            button.Click += (_, _) => NovaTransacaoSolicitada?.Invoke(this, EventArgs.Empty);
+
+            empty.Controls.Add(new Label
+            {
+                Dock = DockStyle.Fill,
+                Text = "Nenhuma transacao.",
+                ForeColor = AppTheme.MutedText,
+                Font = AppTheme.SectionFont,
+                TextAlign = ContentAlignment.BottomCenter
+            }, 0, 0);
+            empty.Controls.Add(button, 0, 1);
+
+            panel.Controls.Add(empty);
+        }
+        else
+        {
+            var button = new Button
+            {
+                Dock = DockStyle.Bottom,
+                Height = 36,
+                Text = "Ver todas as transacoes",
+                FlatStyle = FlatStyle.Flat,
+                BackColor = AppTheme.PanelAlt,
+                ForeColor = AppTheme.Text,
+                Cursor = Cursors.Hand
+            };
+
+            button.FlatAppearance.BorderSize = 0;
+            button.Click += (_, _) => NovaTransacaoSolicitada?.Invoke(this, EventArgs.Empty);
+
+            panel.Controls.Add(button);
+
+            foreach (var transacao in dashboard.UltimasTransacoes.Reverse())
+            {
+                panel.Controls.Add(new TransactionItem(transacao));
+            }
+        }
+
+        _ultimasPanel.SetContent(panel);
+    }
+
+    private static Chart CriarChartBase()
+    {
+        var chart = new Chart
+        {
+            BackColor = AppTheme.Panel,
+            ForeColor = AppTheme.Text,
+            Palette = ChartColorPalette.None,
+            BorderlineWidth = 0
+        };
+
+        var area = new ChartArea("Principal")
+        {
+            BackColor = AppTheme.Panel
+        };
+
+        area.AxisX.LabelStyle.ForeColor = AppTheme.MutedText;
+        area.AxisY.LabelStyle.ForeColor = AppTheme.MutedText;
+        area.AxisX.LineColor = AppTheme.Border;
+        area.AxisY.LineColor = AppTheme.Border;
+        area.AxisX.MajorGrid.LineColor = AppTheme.Border;
+        area.AxisY.MajorGrid.LineColor = AppTheme.Border;
+        area.AxisX.MajorTickMark.LineColor = AppTheme.Border;
+        area.AxisY.MajorTickMark.LineColor = AppTheme.Border;
+
+        chart.ChartAreas.Add(area);
+        chart.Legends.Add(new Legend
+        {
+            BackColor = AppTheme.Panel,
+            ForeColor = AppTheme.MutedText,
+            Docking = Docking.Top,
+            Alignment = StringAlignment.Far
+        });
+
+        return chart;
+    }
+
+    private static Series CriarSerieLinha(string nome, Color cor)
+    {
+        return new Series(nome)
+        {
+            ChartType = SeriesChartType.Spline,
+            Color = cor,
+            BorderWidth = 3,
+            MarkerStyle = MarkerStyle.Circle,
+            MarkerSize = 7,
+            MarkerColor = cor,
+            XValueType = ChartValueType.String
         };
     }
 
-    private static Label CriarStatusLabel(string texto)
+    private static string FormatarVariacao(decimal? variacao)
     {
-        return new Label
-        {
-            AutoSize = true,
-            ForeColor = Color.FromArgb(88, 96, 105),
-            Text = texto
-        };
+        return variacao is null
+            ? "Sem comparativo"
+            : $"{variacao:+0.##;-0.##;0}% vs mes anterior";
+    }
+
+    private void MostrarEstado(string mensagem)
+    {
+        _stateLabel.Text = mensagem;
     }
 }

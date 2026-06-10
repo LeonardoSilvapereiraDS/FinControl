@@ -1,6 +1,8 @@
 using FinControl.Application.Categorias;
 using FinControl.Domain.Enums;
 using FinControl.Infrastructure.Persistence;
+using FinControl.WinForms.Components;
+using FinControl.WinForms.Design;
 
 namespace FinControl.WinForms;
 
@@ -8,18 +10,21 @@ public sealed class CategoriasControl : UserControl
 {
     private readonly ICategoriaService _categoriaService;
     private readonly BindingSource _bindingSource = new();
-    private readonly DataGridView _grid = new();
-    private readonly TextBox _nomeTextBox = new();
-    private readonly ComboBox _tipoComboBox = new();
+    private readonly StyledDataGridView _grid = new();
+    private readonly TextBox _pesquisaTextBox = new();
+    private readonly ComboBox _tipoFiltroComboBox = new();
     private readonly CheckBox _incluirInativasCheckBox = new();
     private readonly Label _statusLabel = new();
-    private int? _categoriaSelecionadaId;
+    private IReadOnlyList<CategoriaDto> _categorias = [];
 
     public event EventHandler? DadosAlterados;
 
     public CategoriasControl(ICategoriaService categoriaService)
     {
         _categoriaService = categoriaService;
+        AutoScaleMode = AutoScaleMode.None;
+        AutoSize = false;
+        Margin = Padding.Empty;
 
         ConfigurarTela();
     }
@@ -35,82 +40,11 @@ public sealed class CategoriasControl : UserControl
     {
         try
         {
-            var categorias = await _categoriaService.ListarAsync(
+            _categorias = await _categoriaService.ListarAsync(
                 BancoDadosInicializador.UsuarioPadraoId,
                 _incluirInativasCheckBox.Checked);
 
-            _bindingSource.DataSource = categorias;
-            LimparFormulario();
-            _statusLabel.Text = $"{categorias.Count} categorias";
-        }
-        catch (Exception ex)
-        {
-            ExibirErro(ex);
-        }
-    }
-
-    private async Task SalvarAsync()
-    {
-        try
-        {
-            var request = new SalvarCategoriaRequest(
-                _nomeTextBox.Text,
-                (TipoCategoria)_tipoComboBox.SelectedItem!);
-
-            if (_categoriaSelecionadaId is int categoriaId)
-            {
-                await _categoriaService.AtualizarAsync(
-                    BancoDadosInicializador.UsuarioPadraoId,
-                    categoriaId,
-                    request);
-            }
-            else
-            {
-                await _categoriaService.CriarAsync(
-                    BancoDadosInicializador.UsuarioPadraoId,
-                    request);
-            }
-
-            await CarregarAsync();
-            DadosAlterados?.Invoke(this, EventArgs.Empty);
-        }
-        catch (Exception ex)
-        {
-            ExibirErro(ex);
-        }
-    }
-
-    private async Task DesativarAsync()
-    {
-        if (_categoriaSelecionadaId is not int categoriaId)
-        {
-            return;
-        }
-
-        try
-        {
-            await _categoriaService.DesativarAsync(BancoDadosInicializador.UsuarioPadraoId, categoriaId);
-            await CarregarAsync();
-            DadosAlterados?.Invoke(this, EventArgs.Empty);
-        }
-        catch (Exception ex)
-        {
-            ExibirErro(ex);
-        }
-    }
-
-    private async Task ReativarAsync()
-    {
-        if (_categoriaSelecionadaId is not int categoriaId)
-        {
-            return;
-        }
-
-        try
-        {
-            await _categoriaService.ReativarAsync(BancoDadosInicializador.UsuarioPadraoId, categoriaId);
-            await CarregarAsync();
-            DadosAlterados?.Invoke(this, EventArgs.Empty);
+            AplicarFiltros();
         }
         catch (Exception ex)
         {
@@ -120,207 +54,235 @@ public sealed class CategoriasControl : UserControl
 
     private void ConfigurarTela()
     {
-        BackColor = Color.FromArgb(246, 248, 250);
+        BackColor = AppTheme.Background;
 
-        var container = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount = 2,
-            BackColor = BackColor
-        };
-
-        container.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 320));
-        container.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        container.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        container.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-
-        container.Controls.Add(CriarFormulario(), 0, 0);
-        container.Controls.Add(CriarGrid(), 1, 0);
-        container.Controls.Add(_statusLabel, 1, 1);
-
-        _statusLabel.AutoSize = true;
-        _statusLabel.ForeColor = Color.FromArgb(88, 96, 105);
-        _statusLabel.Text = "Carregando dados...";
-
-        Controls.Add(container);
-    }
-
-    private Control CriarFormulario()
-    {
-        var painel = new TableLayoutPanel
+        var root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 10,
-            Padding = new Padding(0, 0, 18, 0),
+            RowCount = 4,
+            BackColor = AppTheme.Background
+        };
+
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+
+        root.Controls.Add(CriarCabecalho(), 0, 0);
+        root.Controls.Add(CriarFiltros(), 0, 1);
+        root.Controls.Add(CriarGridHost(), 0, 2);
+
+        _statusLabel.Dock = DockStyle.Fill;
+        _statusLabel.ForeColor = AppTheme.MutedText;
+        _statusLabel.Font = AppTheme.SmallFont;
+        _statusLabel.TextAlign = ContentAlignment.MiddleLeft;
+        root.Controls.Add(_statusLabel, 0, 3);
+
+        Controls.Add(root);
+    }
+
+    private Control CriarCabecalho()
+    {
+        var header = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
             BackColor = Color.Transparent
         };
 
-        for (var i = 0; i < painel.RowCount; i++)
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+
+        header.Controls.Add(new Label
         {
-            painel.RowStyles.Add(new RowStyle(SizeType.Absolute, i is 0 ? 44 : 42));
-        }
+            Dock = DockStyle.Fill,
+            Text = "Categorias",
+            Font = AppTheme.SectionFont,
+            ForeColor = AppTheme.Text,
+            TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 0);
 
-        _tipoComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
-        _tipoComboBox.Items.AddRange(Enum.GetValues<TipoCategoria>().Cast<object>().ToArray());
-        SelecionarPrimeiroItem(_tipoComboBox);
+        var novo = CriarBotao("Novo", primary: true);
+        novo.Click += async (_, _) => await AbrirFormularioAsync(null);
+        header.Controls.Add(novo, 1, 0);
 
-        var salvarButton = CriarBotao("Salvar");
-        var novoButton = CriarBotao("Novo");
-        var desativarButton = CriarBotao("Desativar");
-        var reativarButton = CriarBotao("Reativar");
+        return header;
+    }
 
-        salvarButton.Click += async (_, _) => await SalvarAsync();
-        novoButton.Click += (_, _) => LimparFormulario();
-        desativarButton.Click += async (_, _) => await DesativarAsync();
-        reativarButton.Click += async (_, _) => await ReativarAsync();
-        _incluirInativasCheckBox.CheckedChanged += async (_, _) => await CarregarAsync();
+    private Control CriarFiltros()
+    {
+        var filtros = new RoundedPanel
+        {
+            Dock = DockStyle.Fill,
+            CornerRadius = 14,
+            Padding = new Padding(16, 12, 16, 12),
+            Margin = new Padding(0, 0, 0, 14),
+            BackColor = AppTheme.Panel
+        };
 
-        painel.Controls.Add(CriarTitulo("Categoria"), 0, 0);
-        painel.Controls.Add(CriarCampo("Nome", _nomeTextBox), 0, 1);
-        painel.Controls.Add(CriarCampo("Tipo", _tipoComboBox), 0, 2);
-        painel.Controls.Add(salvarButton, 0, 3);
-        painel.Controls.Add(novoButton, 0, 4);
-        painel.Controls.Add(desativarButton, 0, 5);
-        painel.Controls.Add(reativarButton, 0, 6);
-        painel.Controls.Add(_incluirInativasCheckBox, 0, 7);
+        var grid = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 4,
+            RowCount = 1,
+            BackColor = Color.Transparent
+        };
+
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+
+        _pesquisaTextBox.PlaceholderText = "Pesquisar por nome";
+        ControlStyler.StyleInput(_pesquisaTextBox);
+        _pesquisaTextBox.TextChanged += (_, _) => AplicarFiltros();
+
+        _tipoFiltroComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        _tipoFiltroComboBox.Items.Add("Todos");
+        _tipoFiltroComboBox.Items.Add(TipoCategoria.Receita);
+        _tipoFiltroComboBox.Items.Add(TipoCategoria.Despesa);
+        _tipoFiltroComboBox.SelectedIndex = 0;
+        ControlStyler.StyleInput(_tipoFiltroComboBox);
+        _tipoFiltroComboBox.SelectedIndexChanged += (_, _) => AplicarFiltros();
 
         _incluirInativasCheckBox.Text = "Inativas";
         _incluirInativasCheckBox.AutoSize = true;
-        _incluirInativasCheckBox.Margin = new Padding(0, 8, 0, 0);
+        ControlStyler.StyleCheckBox(_incluirInativasCheckBox);
+        _incluirInativasCheckBox.CheckedChanged += async (_, _) => await CarregarAsync();
 
-        return painel;
+        var atualizar = CriarBotao("Atualizar", primary: false);
+        atualizar.Click += async (_, _) => await CarregarAsync();
+
+        grid.Controls.Add(_pesquisaTextBox, 0, 0);
+        grid.Controls.Add(_tipoFiltroComboBox, 1, 0);
+        grid.Controls.Add(_incluirInativasCheckBox, 2, 0);
+        grid.Controls.Add(atualizar, 3, 0);
+
+        filtros.Controls.Add(grid);
+
+        return filtros;
     }
 
-    private Control CriarGrid()
+    private Control CriarGridHost()
     {
-        _grid.Dock = DockStyle.Fill;
-        _grid.AutoGenerateColumns = false;
-        _grid.AllowUserToAddRows = false;
-        _grid.AllowUserToDeleteRows = false;
-        _grid.AllowUserToResizeRows = false;
-        _grid.MultiSelect = false;
-        _grid.ReadOnly = true;
-        _grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-        _grid.RowHeadersVisible = false;
-        _grid.BackgroundColor = Color.White;
-        _grid.BorderStyle = BorderStyle.FixedSingle;
-        _grid.DataSource = _bindingSource;
+        var host = new RoundedPanel
+        {
+            Dock = DockStyle.Fill,
+            CornerRadius = 18,
+            Padding = new Padding(1),
+            Margin = new Padding(0),
+            BackColor = AppTheme.Panel
+        };
 
+        _grid.DataSource = _bindingSource;
         _grid.Columns.Add(new DataGridViewTextBoxColumn
         {
             HeaderText = "Nome",
             DataPropertyName = nameof(CategoriaDto.Nome),
-            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-            FillWeight = 55
+            FillWeight = 52
         });
-
         _grid.Columns.Add(new DataGridViewTextBoxColumn
         {
             HeaderText = "Tipo",
             DataPropertyName = nameof(CategoriaDto.Tipo),
-            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-            FillWeight = 25
+            FillWeight = 28
         });
-
         _grid.Columns.Add(new DataGridViewCheckBoxColumn
         {
             HeaderText = "Ativa",
             DataPropertyName = nameof(CategoriaDto.Ativa),
-            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
             FillWeight = 20
         });
+        _grid.CellDoubleClick += async (_, _) => await EditarSelecionadaAsync();
 
-        _grid.SelectionChanged += (_, _) => PreencherFormularioComSelecao();
+        host.Controls.Add(_grid);
 
-        return _grid;
+        return host;
     }
 
-    private void PreencherFormularioComSelecao()
+    private void AplicarFiltros()
     {
-        if (_grid.SelectedRows.Count == 0 ||
-            _grid.SelectedRows[0].DataBoundItem is not CategoriaDto categoria)
+        var termo = _pesquisaTextBox.Text.Trim();
+        var resultado = _categorias.AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(termo))
+        {
+            resultado = resultado.Where(categoria =>
+                categoria.Nome.Contains(termo, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (_tipoFiltroComboBox.SelectedItem is TipoCategoria tipo)
+        {
+            resultado = resultado.Where(categoria => categoria.Tipo == tipo);
+        }
+
+        var lista = resultado.ToList();
+        _bindingSource.DataSource = lista;
+        _statusLabel.Text = lista.Count == 0 ? "Nenhuma categoria encontrada." : $"{lista.Count} categorias";
+    }
+
+    private async Task AbrirFormularioAsync(CategoriaDto? categoria)
+    {
+        using var form = new CategoriaForm(categoria);
+
+        if (form.ShowDialog(this) != DialogResult.OK)
         {
             return;
         }
 
-        _categoriaSelecionadaId = categoria.Id;
-        _nomeTextBox.Text = categoria.Nome;
-        _tipoComboBox.SelectedItem = categoria.Tipo;
+        try
+        {
+            if (categoria is null)
+            {
+                await _categoriaService.CriarAsync(BancoDadosInicializador.UsuarioPadraoId, form.Request);
+            }
+            else
+            {
+                await _categoriaService.AtualizarAsync(BancoDadosInicializador.UsuarioPadraoId, categoria.Id, form.Request);
+            }
+
+            await CarregarAsync();
+            DadosAlterados?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception ex)
+        {
+            ExibirErro(ex);
+        }
     }
 
-    private void LimparFormulario()
+    private async Task EditarSelecionadaAsync()
     {
-        _categoriaSelecionadaId = null;
-        _nomeTextBox.Clear();
-        SelecionarPrimeiroItem(_tipoComboBox);
-        _grid.ClearSelection();
+        if (_grid.CurrentRow?.DataBoundItem is CategoriaDto categoria)
+        {
+            await AbrirFormularioAsync(categoria);
+        }
     }
 
-    private static Control CriarCampo(string rotulo, Control controle)
+    private static Button CriarBotao(string texto, bool primary)
     {
-        var painel = new TableLayoutPanel
+        var button = new Button
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 2,
-            Margin = new Padding(0, 0, 0, 8)
-        };
-
-        painel.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
-        painel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-
-        painel.Controls.Add(new Label
-        {
-            AutoSize = true,
-            ForeColor = Color.FromArgb(88, 96, 105),
-            Text = rotulo
-        }, 0, 0);
-
-        controle.Dock = DockStyle.Fill;
-        painel.Controls.Add(controle, 0, 1);
-
-        return painel;
-    }
-
-    private static Label CriarTitulo(string texto)
-    {
-        return new Label
-        {
-            AutoSize = true,
-            Font = new Font("Segoe UI Semibold", 14F, FontStyle.Bold, GraphicsUnit.Point),
-            ForeColor = Color.FromArgb(31, 35, 40),
+            Height = 40,
             Text = texto
         };
-    }
 
-    private static Button CriarBotao(string texto)
-    {
-        return new Button
+        if (primary)
         {
-            Dock = DockStyle.Fill,
-            Height = 34,
-            Margin = new Padding(0, 0, 0, 8),
-            Text = texto,
-            UseVisualStyleBackColor = true
-        };
-    }
-
-    private static void SelecionarPrimeiroItem(ComboBox comboBox)
-    {
-        if (comboBox.Items.Count > 0)
-        {
-            comboBox.SelectedIndex = 0;
+            ControlStyler.StylePrimaryButton(button);
         }
+        else
+        {
+            ControlStyler.StyleSecondaryButton(button);
+        }
+
+        return button;
     }
 
     private static void ExibirErro(Exception ex)
     {
-        MessageBox.Show(
-            ex.Message,
-            "FinControl",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Warning);
+        MessageBox.Show(ex.Message, "FinControl", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 }

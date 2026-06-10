@@ -14,7 +14,9 @@ static class Program
     {
         try
         {
-            ApplicationConfiguration.Initialize();
+            System.Windows.Forms.Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            System.Windows.Forms.Application.EnableVisualStyles();
+            System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
 
             var services = new ServiceCollection();
             ConfigurarServicos(services);
@@ -23,7 +25,7 @@ static class Program
             InicializarBancoDados(_serviceProvider);
 
             System.Windows.Forms.Application.ApplicationExit += (_, _) => _serviceProvider.Dispose();
-            System.Windows.Forms.Application.Run(_serviceProvider.GetRequiredService<Form1>());
+            System.Windows.Forms.Application.Run(_serviceProvider.GetRequiredService<MainForm>());
         }
         catch (Exception ex)
         {
@@ -45,7 +47,7 @@ static class Program
         services.AddTransient<TransacoesControl>();
         services.AddTransient<CategoriasControl>();
         services.AddTransient<ContasControl>();
-        services.AddTransient<Form1>();
+        services.AddTransient<MainForm>();
     }
 
     private static string ObterConnectionString()
